@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ITI Ramban | Notice Admin</title>
+<style>
+body{margin:0;background:#f4f8fc;color:#243b53;font:16px system-ui,Arial}header{background:#102a43;color:white;padding:20px}main{max-width:900px;margin:25px auto;padding:0 16px}.panel{background:white;border:1px solid #d9e2ec;border-radius:12px;padding:20px;margin-bottom:16px}h1,h2{margin-top:0}label{font-weight:700;font-size:.9rem}input,textarea,select{display:block;box-sizing:border-box;width:100%;padding:10px;margin:5px 0 12px;border:1px solid #bcccdc;border-radius:7px;font:inherit}textarea{min-height:110px}.btn{background:#1769aa;color:white;border:0;border-radius:7px;padding:11px 15px;font-weight:700;cursor:pointer;margin:4px 4px 4px 0}.secondary{background:#eaf4ff;color:#174a75}.danger{background:#a61b1b}.hidden{display:none}.status{background:#eaf4ff;padding:10px;border-radius:7px;white-space:pre-wrap}.notice{border:1px solid #d9e2ec;border-radius:8px;padding:12px;margin:10px 0}.hint{color:#627d98;font-size:.88rem}.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:600px){.grid{grid-template-columns:1fr}}
+</style></head><body>
+<header><h1>Government ITI Ramban</h1>Notice Management — authorized staff only</header><main>
+<div class="panel"><h2>Connect Supabase</h2><p class="hint">Use your project URL and publishable/anon key only. Never enter a service_role or secret key.</p>
+<div class="grid"><div><label>Project URL</label><input id="url" placeholder="https://your-project.supabase.co"></div><div><label>Publishable / anon key</label><input id="key" placeholder="sb_publishable_..."></div></div>
+<button class="btn" id="connect">Connect</button><div class="status" id="status">Not connected.</div></div>
+<div class="panel hidden" id="login"><h2>Staff sign in</h2><p class="hint">Staff accounts must be created and approved by the project administrator. There is no public sign-up.</p>
+<label>Authorized email</label><input id="email" type="email" autocomplete="username"><label>Password</label><input id="password" type="password" autocomplete="current-password"><button class="btn" id="signin">Sign in</button><button class="btn secondary" id="signout">Sign out</button></div>
+<div class="panel hidden" id="editor"><h2 id="formTitle">Create a notice</h2><form id="form"><input id="id" type="hidden">
+<label>Notice title *</label><input id="title" required maxlength="200">
+<div class="grid"><div><label>Category</label><select id="category"><option>General</option><option>Admissions</option><option>Examination</option><option>Apprenticeship</option><option>Events</option><option>Recruitment</option></select></div><div><label>Approved PDF (optional, max 10 MB)</label><input id="pdf" type="file" accept="application/pdf"></div></div>
+<label>Notice text</label><textarea id="body" maxlength="12000"></textarea><label><input id="published" type="checkbox" style="display:inline;width:auto"> Publish publicly now</label><br>
+<button class="btn" type="submit">Save notice</button><button class="btn secondary" type="button" id="clear">Clear form</button></form></div>
+<div class="panel hidden" id="list"><h2>Manage notices</h2><button class="btn secondary" id="refresh">Refresh</button><div id="items"></div></div>
+<p class="hint">This is a starter, not yet connected to the public homepage. Public PDFs are publicly readable; upload only documents approved for public release. Obtain institute approval before live use.</p></main>
+<script type="module">
+import {createClient} from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+let db=null,user=null,profile=null;const $=x=>document.getElementById(x);
+function status(s){$('status').textContent=s}
+function show(id,v=true){$(id).classList.toggle('hidden',!v)}
+$('connect').onclick=async()=>{try{let u=$('url').value.trim().replace(/\/+$/,'');let k=$('key').value.trim();if(!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(u)||!k){status('Enter a valid project URL and publishable/anon key.');return}db=createClient(u,k);await db.auth.getSession();show('login');status('Connected. Sign in with an approved staff account.')}catch(e){status('Connection failed: '+e.message)}};
+$('signin').onclick=async()=>{let {data,error}=await db.auth.signInWithPassword({email:$('email').value.trim(),password:$('password').value});if(error){status('Sign-in failed: '+error.message);return}user=data.user;let r=await db.from('profiles').select('display_name,role').eq('id',user.id).maybeSingle();if(r.error||!r.data||!['principal','staff'].includes(r.data.role)){await db.auth.signOut();user=null;status('Access denied. Ask the project administrator to approve this account in public.profiles.');return}profile=r.data;status('Signed in as '+profile.role+'.');show('editor');show('list');await load()};
+$('signout').onclick=async()=>{if(db)await db.auth.signOut();user=null;profile=null;show('editor',false);show('list',false);status('Signed out.')};
+$('form').onsubmit=async e=>{e.preventDefault();if(!user||!profile)return;let path=null,f=$('pdf').files[0];if(f){if(f.type!=='application/pdf'||f.size>10*1024*1024){status('Choose a PDF no larger than 10 MB.');return}let safe=f.name.replace(/[^a-zA-Z0-9._-]/g,'_');let up=await db.storage.from('public-notices').upload(Date.now()+'-'+safe,f,{contentType:'application/pdf'});if(up.error){status('PDF upload failed: '+up.error.message);return}path=up.data.path}
+let payload={title:$('title').value.trim(),body:$('body').value.trim(),category:$('category').value,published:$('published').checked,updated_at:new Date().toISOString()};if(path)payload.attachment_path=path;
+let id=$('id').value;if(id){let r=await db.from('notices').update(payload).eq('id',Number(id));if(r.error){status('Save failed: '+r.error.message);return}}else{payload.created_by=user.id;let r=await db.from('notices').insert(payload);if(r.error){status('Save failed: '+r.error.message);return}}
+status('Notice saved.');clearForm();await load()};
+function clearForm(){$('form').reset();$('id').value='';$('formTitle').textContent='Create a notice'}$('clear').onclick=clearForm;$('refresh').onclick=load;
+async function load(){let r=await db.from('notices').select('*').order('created_at',{ascending:false});if(r.error){$('items').textContent='Load failed: '+r.error.message;return}$('items').replaceChildren();if(!r.data.length){$('items').textContent='No notices yet.';return}
+for(let n of r.data){let box=document.createElement('div');box.className='notice';let h=document.createElement('strong');h.textContent=n.title;let p=document.createElement('p');p.textContent=n.category+' · '+(n.published?'Published':'Draft')+' · '+new Date(n.created_at).toLocaleDateString();let b=document.createElement('p');b.textContent=n.body||'No notice text.';box.append(h,p,b);
+if(n.attachment_path){let a=document.createElement('a');a.href=db.storage.from('public-notices').getPublicUrl(n.attachment_path).data.publicUrl;a.target='_blank';a.rel='noopener';a.textContent='Open attached PDF';box.append(a,document.createElement('br'))}
+let edit=document.createElement('button');edit.className='btn secondary';edit.textContent='Edit';edit.onclick=()=>{$('id').value=n.id;$('title').value=n.title;$('category').value=n.category;$('body').value=n.body||'';$('published').checked=n.published;$('formTitle').textContent='Edit notice';window.scrollTo({top:0,behavior:'smooth'})};
+let del=document.createElement('button');del.className='btn danger';del.textContent='Delete';del.onclick=async()=>{if(confirm('Delete this notice?')){let d=await db.from('notices').delete().eq('id',n.id);status(d.error?'Delete failed: '+d.error.message:'Notice deleted.');if(!d.error)await load()}};box.append(edit,del);$('items').append(box)}
+}
+</script></body></html>
